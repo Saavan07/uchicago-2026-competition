@@ -120,7 +120,7 @@ class MarketABot(XChangeClient):
         now_ms = self._now_ms()
         a_position = int(self.positions.get("A", 0))
         cash_value = int(self.positions.get("cash", 0))
-        self.strategy.set_inventory(a_position)
+        self.strategy.sync_inventory_from_exchange(a_position)
         self.journal.record_inventory(a_position, cash=cash_value)
         if self.tracer is not None:
             self.tracer.record_inventory_update(
@@ -189,7 +189,7 @@ class MarketABot(XChangeClient):
         if msg_type == "position_update" and msg.position_update.symbol == "A":
             now_ms = self._now_ms()
             inventory = int(msg.position_update.value)
-            self.strategy.set_inventory(inventory)
+            self.strategy.sync_inventory_from_exchange(inventory)
             self.journal.record_inventory(inventory, cash=int(self.positions.get("cash", 0)))
             if self.tracer is not None:
                 self.tracer.record_inventory_update(
@@ -541,6 +541,7 @@ class MarketABot(XChangeClient):
                     px=placement.px,
                     qty=placement.qty,
                     now_ms=now_ms,
+                    overlay=placement.overlay,
                     aggressive=placement.aggressive,
                     intent=placement.intent,
                     mode_at_submit=placement.mode_at_submit,
@@ -594,6 +595,7 @@ class MarketABot(XChangeClient):
             "qty": order.qty,
             "remaining_qty": order.remaining_qty,
             "submitted_ms": order.submitted_ms,
+            "overlay": getattr(order, "overlay", "mm"),
             "aggressive": order.aggressive,
             "cancel_pending": getattr(order, "cancel_pending", False),
             "restored": getattr(order, "restored", False),

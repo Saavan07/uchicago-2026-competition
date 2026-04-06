@@ -34,8 +34,13 @@ SNAPSHOT_FIELDNAMES = [
     "trusted_multiplier",
     "multiplier_confidence",
     "inventory",
+    "earnings_position",
+    "mm_position",
     "buy_exposure",
     "sell_exposure",
+    "earnings_budget",
+    "mm_budget",
+    "budget_shift_active",
     "allowed_buy_size",
     "allowed_sell_size",
     "position_cap",
@@ -170,9 +175,16 @@ def summarize_trace_events(events: Iterable[dict[str, Any]], *, markout_windows_
     spread_cross_count = 0
     observe_only_count = 0
     inventory_values: list[int] = []
+    earnings_inventory_values: list[int] = []
+    mm_inventory_values: list[int] = []
     quoted_spreads: list[int] = []
     latest_mtm: float | None = None
     latest_mtm_basis: str | None = None
+    fills_by_overlay: Counter[str] = Counter()
+    submits_by_overlay: Counter[str] = Counter()
+    budget_shift_active_ms = 0
+    last_budget_shift_state: bool | None = None
+    last_budget_shift_started_ms: int | None = None
 
     def nearest_snapshot_mid(target_ms: int) -> float | None:
         for snapshot in snapshot_events:
@@ -196,10 +208,26 @@ def summarize_trace_events(events: Iterable[dict[str, Any]], *, markout_windows_
                 last_mode = str(mode)
                 last_mode_started_ms = now_ms
 
+        budget_shift_active = bool(event.get("budget_shift_active"))
+        if last_budget_shift_state is None:
+            last_budget_shift_state = budget_shift_active
+            last_budget_shift_started_ms = now_ms
+        elif budget_shift_active != last_budget_shift_state:
+            if last_budget_shift_state and last_budget_shift_started_ms is not None:
+                budget_shift_active_ms += max(0, now_ms - last_budget_shift_started_ms)
+            last_budget_shift_state = budget_shift_active
+            last_budget_shift_started_ms = now_ms
+
         if event.get("event_type") in {"decision_evaluated", "session_state_snapshot"}:
             inventory = event.get("inventory")
             if inventory is not None:
                 inventory_values.append(int(inventory))
+            earnings_inventory = event.get("earnings_position")
+            if earnings_inventory is not None:
+                earnings_inventory_values.append(int(earnings_inventory))
+            mm_inventory = event.get("mm_position")
+            if mm_inventory is not None:
+                mm_inventory_values.append(int(mm_inventory))
             quoted_spread = event.get("quoted_spread")
             if quoted_spread is not None:
                 quoted_spreads.append(int(quoted_spread))
@@ -217,6 +245,7 @@ def summarize_trace_events(events: Iterable[dict[str, Any]], *, markout_windows_
         elif event.get("event_type") == "order_submitted":
             intent = str(event.get("intent") or "unknown")
             submits_by_intent[intent] += 1
+            submits_by_overlay[str(event.get("overlay") or "unknown")] += 1
             if bool(event.get("aggressive")):
                 spread_cross_count += 1
 
@@ -229,6 +258,7 @@ def summarize_trace_events(events: Iterable[dict[str, Any]], *, markout_windows_
         elif event.get("event_type") == "order_filled":
             intent = str(event.get("intent") or "unknown")
             fills_by_intent[intent] += 1
+            fills_by_overlay[str(event.get("overlay") or "unknown")] += 1
             if bool(event.get("aggressive")):
                 aggressive_fills += 1
             else:
@@ -247,6 +277,8 @@ def summarize_trace_events(events: Iterable[dict[str, Any]], *, markout_windows_
     if last_mode is not None and last_mode_started_ms is not None and event_list:
         final_ms = int(event_list[-1].get("monotonic_ms", 0))
         mode_durations_ms[last_mode] += max(0, final_ms - last_mode_started_ms)
+        if last_budget_shift_state and last_budget_shift_started_ms is not None:
+            budget_shift_active_ms += max(0, final_ms - last_budget_shift_started_ms)
 
     fill_markout_summary: dict[str, dict[str, float]] = {}
     for intent, windows in fill_markouts_by_intent.items():
@@ -263,17 +295,22 @@ def summarize_trace_events(events: Iterable[dict[str, Any]], *, markout_windows_
         "passive_fills": passive_fills,
         "aggressive_fills": aggressive_fills,
         "fills_by_intent": dict(sorted(fills_by_intent.items())),
+        "fills_by_overlay": dict(sorted(fills_by_overlay.items())),
         "submits_by_intent": dict(sorted(submits_by_intent.items())),
+        "submits_by_overlay": dict(sorted(submits_by_overlay.items())),
         "cancel_reasons": dict(cancel_reason_counts.most_common()),
         "reject_reasons": dict(reject_reason_counts.most_common()),
         "mode_durations_ms": dict(sorted(mode_durations_ms.items())),
         "largest_inventory_long": max(inventory_values) if inventory_values else 0,
         "largest_inventory_short": min(inventory_values) if inventory_values else 0,
         "average_inventory": (sum(inventory_values) / len(inventory_values)) if inventory_values else 0.0,
+        "average_earnings_inventory": (sum(earnings_inventory_values) / len(earnings_inventory_values)) if earnings_inventory_values else 0.0,
+        "average_mm_inventory": (sum(mm_inventory_values) / len(mm_inventory_values)) if mm_inventory_values else 0.0,
         "average_quoted_spread": (sum(quoted_spreads) / len(quoted_spreads)) if quoted_spreads else None,
         "observe_only_count": observe_only_count,
         "most_common_no_action_reasons": dict(no_action_reasons.most_common()),
         "spread_cross_count": spread_cross_count,
+        "budget_shift_active_ms": budget_shift_active_ms,
         "estimated_final_mtm_pnl": latest_mtm,
         "estimated_final_mtm_basis": latest_mtm_basis,
         "fill_markouts_by_intent": fill_markout_summary,
@@ -288,6 +325,7 @@ def summarize_trace_events(events: Iterable[dict[str, Any]], *, markout_windows_
 
 def render_summary_markdown(summary: dict[str, Any], run_id: str, run_dir: Path) -> str:
     fills_by_intent = summary.get("fills_by_intent") or {}
+    fills_by_overlay = summary.get("fills_by_overlay") or {}
     mode_durations = summary.get("mode_durations_ms") or {}
     no_action = summary.get("most_common_no_action_reasons") or {}
     return "\n".join(
@@ -303,11 +341,17 @@ def render_summary_markdown(summary: dict[str, Any], run_id: str, run_dir: Path)
             f"- Largest long inventory: `{summary.get('largest_inventory_long', 0)}`",
             f"- Largest short inventory: `{summary.get('largest_inventory_short', 0)}`",
             f"- Average inventory: `{summary.get('average_inventory', 0.0):.2f}`",
+            f"- Average earnings inventory: `{summary.get('average_earnings_inventory', 0.0):.2f}`",
+            f"- Average MM inventory: `{summary.get('average_mm_inventory', 0.0):.2f}`",
             f"- Average quoted spread: `{summary.get('average_quoted_spread')}`",
             f"- Observe-only decisions: `{summary.get('observe_only_count', 0)}`",
+            f"- Budget shift active (ms): `{summary.get('budget_shift_active_ms', 0)}`",
             "",
             "## Fills By Intent",
             *(f"- `{intent}`: `{count}`" for intent, count in fills_by_intent.items()),
+            "",
+            "## Fills By Overlay",
+            *(f"- `{overlay}`: `{count}`" for overlay, count in fills_by_overlay.items()),
             "",
             "## Mode Durations (ms)",
             *(f"- `{mode}`: `{duration}`" for mode, duration in mode_durations.items()),
@@ -388,8 +432,14 @@ class TraceRecorder:
             "shock_target_fair": state.get("shock_target_fair"),
             "news_caution_active": state.get("news_caution_active"),
             "inventory": state.get("inventory"),
+            "earnings_position": state.get("earnings_position"),
+            "mm_position": state.get("mm_position"),
+            "earnings_budget": state.get("earnings_budget"),
+            "mm_budget": state.get("mm_budget"),
+            "budget_shift_active": state.get("budget_shift_active"),
             "buy_exposure": state.get("buy_exposure"),
             "sell_exposure": state.get("sell_exposure"),
+            "overlay_exposures": state.get("overlay_exposures"),
             "allowed_buy_size": state.get("allowed_buy_size"),
             "allowed_sell_size": state.get("allowed_sell_size"),
             "position_cap": state.get("position_cap"),
@@ -425,6 +475,7 @@ class TraceRecorder:
             "side": order.get("side"),
             "px": order.get("px"),
             "qty": order.get("qty"),
+            "overlay": order.get("overlay"),
             "aggressive": order.get("aggressive"),
             "reason": order.get("reason"),
             "intent": order.get("intent"),
@@ -607,6 +658,7 @@ class TraceRecorder:
                 "price": order.get("px"),
                 "qty": order.get("qty"),
                 "remaining_qty": order.get("remaining_qty"),
+                "overlay": order.get("overlay"),
                 "aggressive": order.get("aggressive"),
                 "intent": order.get("intent"),
                 "mode_at_submit": order.get("mode_at_submit"),
@@ -643,6 +695,7 @@ class TraceRecorder:
                 "price": None if order is None else order.get("px"),
                 "qty": None if order is None else order.get("qty"),
                 "remaining_qty": None if order is None else order.get("remaining_qty"),
+                "overlay": None if order is None else order.get("overlay"),
                 "aggressive": None if order is None else order.get("aggressive"),
                 "intent": None if order is None else order.get("intent"),
                 "cancel_reason": cancel_reason,
@@ -677,6 +730,7 @@ class TraceRecorder:
                 "price": None if order is None else order.get("px"),
                 "qty": None if order is None else order.get("qty"),
                 "remaining_qty": None if order is None else order.get("remaining_qty"),
+                "overlay": None if order is None else order.get("overlay"),
                 "aggressive": None if order is None else order.get("aggressive"),
                 "intent": None if order is None else order.get("intent"),
                 "success": bool(success),
@@ -712,6 +766,7 @@ class TraceRecorder:
                 "qty": int(qty),
                 "fill_qty": int(qty),
                 "remaining_qty": None if order is None else order.get("remaining_qty"),
+                "overlay": None if order is None else order.get("overlay"),
                 "aggressive": None if order is None else order.get("aggressive"),
                 "intent": None if order is None else order.get("intent"),
                 "mode_at_submit": None if order is None else order.get("mode_at_submit"),
@@ -748,6 +803,7 @@ class TraceRecorder:
                 "price": None if order is None else order.get("px"),
                 "qty": None if order is None else order.get("qty"),
                 "remaining_qty": None if order is None else order.get("remaining_qty"),
+                "overlay": None if order is None else order.get("overlay"),
                 "aggressive": None if order is None else order.get("aggressive"),
                 "intent": None if order is None else order.get("intent"),
                 "rejection_reason": reason,
@@ -783,8 +839,13 @@ class TraceRecorder:
             "trusted_multiplier": event.get("trusted_multiplier"),
             "multiplier_confidence": event.get("multiplier_confidence"),
             "inventory": event.get("inventory"),
+            "earnings_position": event.get("earnings_position"),
+            "mm_position": event.get("mm_position"),
             "buy_exposure": event.get("buy_exposure"),
             "sell_exposure": event.get("sell_exposure"),
+            "earnings_budget": event.get("earnings_budget"),
+            "mm_budget": event.get("mm_budget"),
+            "budget_shift_active": event.get("budget_shift_active"),
             "allowed_buy_size": event.get("allowed_buy_size"),
             "allowed_sell_size": event.get("allowed_sell_size"),
             "position_cap": event.get("position_cap"),

@@ -21,6 +21,11 @@ class AConfig:
     initial_multiplier: float | None = None
     initial_fair_value: int | None = None
     recover_pricing_state: bool = False
+    total_position_limit: int = 180
+    earnings_base_budget: int = 120
+    mm_base_budget: int = 60
+    earnings_shift_budget: int = 180
+    mm_shift_budget: int = 0
     startup_assume_fresh_round: bool = True
     pre_news_pullback_ms: int = 4_000
     calibration_min_delay_ms: int = 5_000
@@ -203,6 +208,11 @@ def load_bot_config(
             initial_multiplier=_optional_float("A_INITIAL_MULTIPLIER", default=default_initial_multiplier),
             initial_fair_value=_optional_int("A_INITIAL_FAIR_VALUE", default_initial_fair_value),
             recover_pricing_state=_optional_bool("A_RECOVER_PRICING_STATE", False),
+            total_position_limit=_optional_int("A_TOTAL_POSITION_LIMIT", 180) or 180,
+            earnings_base_budget=_optional_int("A_EARNINGS_BASE_BUDGET", 120) or 120,
+            mm_base_budget=_optional_int("A_MM_BASE_BUDGET", 60) or 60,
+            earnings_shift_budget=_optional_int("A_EARNINGS_SHIFT_BUDGET", 180) or 180,
+            mm_shift_budget=_optional_int("A_MM_SHIFT_BUDGET", 0) or 0,
             startup_assume_fresh_round=_optional_bool("A_STARTUP_ASSUME_FRESH_ROUND", True),
             pre_news_pullback_ms=_optional_int("A_PRE_NEWS_PULLBACK_MS", 4_000) or 4_000,
             calibration_min_delay_ms=_optional_int("A_CALIBRATION_MIN_DELAY_MS", 5_000) or 5_000,
