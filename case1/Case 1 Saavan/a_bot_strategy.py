@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from math import ceil, floor, sqrt
 from statistics import median
 import time
@@ -10,6 +10,7 @@ from a_bot_config import AConfig, RiskConfig
 
 
 SideName = Literal["BUY", "SELL"]
+OverlayName = Literal["earnings", "mm"]
 ModeName = Literal[
     "OPENING_MICRO_MM",
     "PRE_NEWS_PULLBACK",
@@ -87,6 +88,7 @@ class DesiredOrder:
     side: SideName
     px: int
     qty: int
+    overlay: OverlayName = "mm"
     aggressive: bool = False
     reason: str = ""
     intent: str = ""
@@ -104,6 +106,15 @@ class QuotePlan:
     reason: str
 
 
+@dataclass(frozen=True)
+class OverlayPlan:
+    overlay: OverlayName
+    bid: DesiredOrder | None
+    ask: DesiredOrder | None
+    aggressive_actions: tuple[DesiredOrder, ...]
+    reason: str
+
+
 @dataclass
 class ManagedOrder:
     order_id: str
@@ -112,6 +123,7 @@ class ManagedOrder:
     qty: int
     remaining_qty: int
     submitted_ms: int
+    overlay: OverlayName = "mm"
     aggressive: bool = False
     cancel_pending: bool = False
     restored: bool = False
@@ -136,6 +148,7 @@ class PlaceCommand:
     side: SideName
     px: int
     qty: int
+    overlay: OverlayName
     aggressive: bool
     reason: str
     intent: str
@@ -412,6 +425,7 @@ class QuoteEngine:
         side: SideName,
         px: int,
         qty: int,
+        overlay: OverlayName,
         aggressive: bool,
         reason: str,
         intent: str,
@@ -421,6 +435,7 @@ class QuoteEngine:
             side=side,
             px=px,
             qty=qty,
+            overlay=overlay,
             aggressive=aggressive,
             reason=reason,
             intent=intent,
@@ -436,10 +451,17 @@ class QuoteEngine:
         if mode == "NEWS_CAUTIOUS_MM":
             return self.a_config.news_caution_max_position
         if mode == "POST_EARNINGS_SHOCK":
-            return self.a_config.shock_max_position
+            return self.a_config.shock_base_max_position
         if mode == "PRE_NEWS_PULLBACK":
             return 0
         return self.a_config.steady_max_position
+
+    @staticmethod
+    def clamp_allowed_sizes(
+        overlay_allowed: tuple[int, int],
+        global_allowed: tuple[int, int],
+    ) -> tuple[int, int]:
+        return min(overlay_allowed[0], global_allowed[0]), min(overlay_allowed[1], global_allowed[1])
 
     def allowed_size_for_mode(
         self,
@@ -460,6 +482,10 @@ class QuoteEngine:
         book: BookSnapshot,
         buy_exposure: int,
         sell_exposure: int,
+        *,
+        overlay: OverlayName = "mm",
+        cap_override: int | None = None,
+        quote_size_override: int | None = None,
     ) -> QuotePlan:
         mid = book.mid
         spread = book.spread
@@ -476,14 +502,17 @@ class QuoteEngine:
         bid_px = int(floor(mid - self.a_config.opening_half_spread_ticks))
         ask_px = int(ceil(mid + self.a_config.opening_half_spread_ticks))
         bid_px, ask_px = self._clamp_inside_book(bid_px, ask_px, book)
-        allowed_buy, allowed_sell = self._allowed_size(inventory, buy_exposure, sell_exposure, cap=self.a_config.opening_max_position)
+        quote_size = self.a_config.opening_quote_size if quote_size_override is None else max(0, int(quote_size_override))
+        cap = self.a_config.opening_max_position if cap_override is None else max(0, int(cap_override))
+        allowed_buy, allowed_sell = self._allowed_size(inventory, buy_exposure, sell_exposure, cap=cap)
 
         return QuotePlan(
             mode=mode,
             bid=self._desired(
                 side="BUY",
                 px=bid_px,
-                qty=min(self.a_config.opening_quote_size, allowed_buy),
+                qty=min(quote_size, allowed_buy),
+                overlay=overlay,
                 aggressive=False,
                 reason="opening micro-mm bid around live mid",
                 intent="opening_mm",
@@ -494,7 +523,8 @@ class QuoteEngine:
             ask=self._desired(
                 side="SELL",
                 px=ask_px,
-                qty=min(self.a_config.opening_quote_size, allowed_sell),
+                qty=min(quote_size, allowed_sell),
+                overlay=overlay,
                 aggressive=False,
                 reason="opening micro-mm ask around live mid",
                 intent="opening_mm",
@@ -515,6 +545,11 @@ class QuoteEngine:
         book: BookSnapshot,
         buy_exposure: int,
         sell_exposure: int,
+        *,
+        overlay: OverlayName = "mm",
+        max_position_override: int | None = None,
+        quote_size_override: int | None = None,
+        half_spread_override: int | None = None,
     ) -> QuotePlan:
         anchor = book.mid
         if anchor is None and fair_value is not None:
@@ -542,6 +577,13 @@ class QuoteEngine:
             intent = "news_cautious_mm"
             reason = "tiny quotes while A-specific news risk is elevated"
 
+        if half_spread_override is not None:
+            half_spread_ticks = max(0, int(half_spread_override))
+        if quote_size_override is not None:
+            quote_size = max(0, int(quote_size_override))
+        if max_position_override is not None:
+            max_position = max(0, int(max_position_override))
+
         bid_px = int(floor(anchor - half_spread_ticks))
         ask_px = int(ceil(anchor + half_spread_ticks))
         if book.best_bid is not None:
@@ -564,6 +606,7 @@ class QuoteEngine:
                 side="BUY",
                 px=bid_px,
                 qty=min(quote_size, allowed_buy),
+                overlay=overlay,
                 aggressive=False,
                 reason=reason,
                 intent=intent,
@@ -575,6 +618,7 @@ class QuoteEngine:
                 side="SELL",
                 px=ask_px,
                 qty=min(quote_size, allowed_sell),
+                overlay=overlay,
                 aggressive=False,
                 reason=reason,
                 intent=intent,
@@ -587,10 +631,11 @@ class QuoteEngine:
             reason="cautious quoting",
         )
 
-    def _steady_passive_qty(self, side: SideName, inventory: int, allowed: int) -> int:
+    def _steady_passive_qty(self, side: SideName, inventory: int, allowed: int, *, quote_size: int | None = None) -> int:
         if allowed <= 0:
             return 0
-        qty = min(self.a_config.steady_quote_size, allowed)
+        base_quote_size = self.a_config.steady_quote_size if quote_size is None else max(0, int(quote_size))
+        qty = min(base_quote_size, allowed)
         worsening_side: SideName | None = None
         if inventory > 0:
             worsening_side = "BUY"
@@ -603,7 +648,7 @@ class QuoteEngine:
         if abs_inventory >= self.a_config.unwind_exit_position or abs_inventory >= self.a_config.steady_passive_reduce_full:
             return min(1, allowed)
         if abs_inventory >= self.a_config.steady_passive_reduce_start:
-            return min(max(1, self.a_config.steady_quote_size - 1), allowed)
+            return min(max(1, base_quote_size - 1), allowed)
         return qty
 
     def _steady_quotes(
@@ -614,13 +659,19 @@ class QuoteEngine:
         book: BookSnapshot,
         buy_exposure: int,
         sell_exposure: int,
-        ) -> QuotePlan:
+        *,
+        overlay: OverlayName = "mm",
+        cap_override: int | None = None,
+        quote_size_override: int | None = None,
+    ) -> QuotePlan:
         aggressive_actions: list[DesiredOrder] = []
+        quote_size = self.a_config.steady_quote_size if quote_size_override is None else max(0, int(quote_size_override))
+        cap = self.a_config.steady_max_position if cap_override is None else max(0, int(cap_override))
         allowed_buy, allowed_sell = self._allowed_size(
             inventory,
             buy_exposure,
             sell_exposure,
-            cap=self.a_config.steady_max_position,
+            cap=cap,
         )
 
         take_edge = max(self.a_config.steady_take_min_edge, self.a_config.steady_half_spread_ticks)
@@ -635,7 +686,8 @@ class QuoteEngine:
                 self._desired(
                     side="BUY",
                     px=book.best_ask.px,
-                    qty=min(self.a_config.steady_quote_size, allowed_buy, book.best_ask.qty),
+                    qty=min(quote_size, allowed_buy, book.best_ask.qty),
+                    overlay=overlay,
                     aggressive=True,
                     reason="steady-state buy through stale ask below fair",
                     intent="steady_take",
@@ -647,7 +699,8 @@ class QuoteEngine:
                 self._desired(
                     side="SELL",
                     px=book.best_bid.px,
-                    qty=min(self.a_config.steady_quote_size, allowed_sell, book.best_bid.qty),
+                    qty=min(quote_size, allowed_sell, book.best_bid.qty),
+                    overlay=overlay,
                     aggressive=True,
                     reason="steady-state sell through stale bid above fair",
                     intent="steady_take",
@@ -660,8 +713,8 @@ class QuoteEngine:
         ask_px = int(ceil(reservation + self.a_config.steady_half_spread_ticks))
         bid_px, ask_px = self._clamp_inside_book(bid_px, ask_px, book)
         aggressive_sides = {action.side for action in aggressive_actions}
-        passive_bid_qty = self._steady_passive_qty("BUY", inventory, allowed_buy)
-        passive_ask_qty = self._steady_passive_qty("SELL", inventory, allowed_sell)
+        passive_bid_qty = self._steady_passive_qty("BUY", inventory, allowed_buy, quote_size=quote_size)
+        passive_ask_qty = self._steady_passive_qty("SELL", inventory, allowed_sell, quote_size=quote_size)
 
         return QuotePlan(
             mode=mode,
@@ -669,6 +722,7 @@ class QuoteEngine:
                 side="BUY",
                 px=bid_px,
                 qty=passive_bid_qty,
+                overlay=overlay,
                 aggressive=False,
                 reason="steady-state bid around learned fair",
                 intent="steady_mm_passive",
@@ -680,6 +734,7 @@ class QuoteEngine:
                 side="SELL",
                 px=ask_px,
                 qty=passive_ask_qty,
+                overlay=overlay,
                 aggressive=False,
                 reason="steady-state ask around learned fair",
                 intent="steady_mm_passive",
@@ -690,6 +745,115 @@ class QuoteEngine:
             aggressive_actions=tuple(aggressive_actions),
             observe_only=False,
             reason="steady mm",
+        )
+
+    def _prejump_quotes(
+        self,
+        mode: ModeName,
+        fair_value: int,
+        inventory: int,
+        book: BookSnapshot,
+        buy_exposure: int,
+        sell_exposure: int,
+        *,
+        bullish: bool,
+        overlay: OverlayName = "earnings",
+        cap_override: int | None = None,
+        quote_size_override: int | None = None,
+        aggressive_edge_override: int | None = None,
+    ) -> QuotePlan:
+        quote_size = self.a_config.prejump_quote_size if quote_size_override is None else max(0, int(quote_size_override))
+        cap = self.a_config.prejump_max_position if cap_override is None else max(0, int(cap_override))
+        aggressive_edge = (
+            self.a_config.prejump_aggressive_edge
+            if aggressive_edge_override is None
+            else max(0, int(aggressive_edge_override))
+        )
+        allowed_buy, allowed_sell = self._allowed_size(
+            inventory,
+            buy_exposure,
+            sell_exposure,
+            cap=cap,
+        )
+        aggressive_actions: list[DesiredOrder] = []
+        desired_bid = None
+        desired_ask = None
+
+        if bullish:
+            if book.best_ask is not None and allowed_buy > 0 and book.best_ask.px <= fair_value + aggressive_edge:
+                aggressive_actions.append(
+                    self._desired(
+                        side="BUY",
+                        px=book.best_ask.px,
+                        qty=min(quote_size, allowed_buy, book.best_ask.qty),
+                        overlay=overlay,
+                        aggressive=True,
+                        reason="boundary pre-jump buy near low earnings extreme",
+                        intent="earnings_prejump",
+                        mode=mode,
+                    )
+                )
+            if allowed_buy > 0:
+                bid_px = int(floor(fair_value - self.a_config.steady_half_spread_ticks))
+                if book.best_bid is not None:
+                    bid_px = max(bid_px, book.best_bid.px + 1)
+                if book.best_ask is not None:
+                    bid_px = min(bid_px, book.best_ask.px - 1)
+                desired_bid = self._desired(
+                    side="BUY",
+                    px=bid_px,
+                    qty=min(quote_size, allowed_buy),
+                    overlay=overlay,
+                    aggressive=False,
+                    reason="boundary pre-jump bid accumulation ahead of earnings",
+                    intent="earnings_prejump",
+                    mode=mode,
+                )
+            return QuotePlan(
+                mode=mode,
+                bid=desired_bid,
+                ask=None,
+                aggressive_actions=tuple(aggressive_actions),
+                observe_only=False,
+                reason="boundary bullish pre-jump",
+            )
+
+        if book.best_bid is not None and allowed_sell > 0 and book.best_bid.px >= fair_value - aggressive_edge:
+            aggressive_actions.append(
+                self._desired(
+                    side="SELL",
+                    px=book.best_bid.px,
+                    qty=min(quote_size, allowed_sell, book.best_bid.qty),
+                    overlay=overlay,
+                    aggressive=True,
+                    reason="boundary pre-jump sell near high earnings extreme",
+                    intent="earnings_prejump",
+                    mode=mode,
+                )
+            )
+        if allowed_sell > 0:
+            ask_px = int(ceil(fair_value + self.a_config.steady_half_spread_ticks))
+            if book.best_ask is not None:
+                ask_px = min(ask_px, max(book.best_bid.px + 1, book.best_ask.px - 1) if book.best_bid is not None else book.best_ask.px - 1)
+            if book.best_bid is not None:
+                ask_px = max(ask_px, book.best_bid.px + 1)
+            desired_ask = self._desired(
+                side="SELL",
+                px=ask_px,
+                qty=min(quote_size, allowed_sell),
+                overlay=overlay,
+                aggressive=False,
+                reason="boundary pre-jump ask accumulation ahead of earnings",
+                intent="earnings_prejump",
+                mode=mode,
+            )
+        return QuotePlan(
+            mode=mode,
+            bid=None,
+            ask=desired_ask,
+            aggressive_actions=tuple(aggressive_actions),
+            observe_only=False,
+            reason="boundary bearish pre-jump",
         )
 
     def _shock_quotes(
@@ -703,13 +867,18 @@ class QuoteEngine:
         *,
         shock_direction: int,
         shock_threshold: int,
+        overlay: OverlayName = "earnings",
+        cap_override: int | None = None,
+        quote_size_override: int | None = None,
     ) -> QuotePlan:
         aggressive_actions: list[DesiredOrder] = []
+        quote_size = self.a_config.shock_quote_size if quote_size_override is None else max(0, int(quote_size_override))
+        cap = self.a_config.shock_base_max_position if cap_override is None else max(0, int(cap_override))
         allowed_buy, allowed_sell = self._allowed_size(
             inventory,
             buy_exposure,
             sell_exposure,
-            cap=self.a_config.shock_max_position,
+            cap=cap,
         )
         desired_bid = None
         desired_ask = None
@@ -721,7 +890,8 @@ class QuoteEngine:
                     self._desired(
                         side="BUY",
                         px=book.best_ask.px,
-                        qty=min(self.a_config.shock_quote_size, allowed_buy, book.best_ask.qty),
+                        qty=min(quote_size, allowed_buy, book.best_ask.qty),
+                        overlay=overlay,
                         aggressive=True,
                         reason="earnings upside shock buy through stale asks",
                         intent="post_earnings_shock_take",
@@ -734,7 +904,8 @@ class QuoteEngine:
                 desired_ask = self._desired(
                     side="SELL",
                     px=ask_px,
-                    qty=min(self.a_config.shock_quote_size, allowed_sell),
+                    qty=min(quote_size, allowed_sell),
+                    overlay=overlay,
                     aggressive=False,
                     reason="post-earnings ask to unwind long inventory",
                     intent="post_earnings_shock_unwind",
@@ -746,7 +917,8 @@ class QuoteEngine:
                     self._desired(
                         side="SELL",
                         px=book.best_bid.px,
-                        qty=min(self.a_config.shock_quote_size, allowed_sell, book.best_bid.qty),
+                        qty=min(quote_size, allowed_sell, book.best_bid.qty),
+                        overlay=overlay,
                         aggressive=True,
                         reason="earnings downside shock sell through stale bids",
                         intent="post_earnings_shock_take",
@@ -759,7 +931,8 @@ class QuoteEngine:
                 desired_bid = self._desired(
                     side="BUY",
                     px=bid_px,
-                    qty=min(self.a_config.shock_quote_size, allowed_buy),
+                    qty=min(quote_size, allowed_buy),
+                    overlay=overlay,
                     aggressive=False,
                     reason="post-earnings bid to unwind short inventory",
                     intent="post_earnings_shock_unwind",
@@ -787,15 +960,27 @@ class QuoteEngine:
         sell_exposure: int,
         *,
         aggressive_allowed: bool,
+        overlay: OverlayName = "earnings",
+        cap_override: int | None = None,
+        quote_size_override: int | None = None,
+        aggressive_intent: str = "unwind",
+        passive_intent: str = "unwind",
+        passive_take_edge_override: int | None = None,
     ) -> QuotePlan:
         aggressive_actions: list[DesiredOrder] = []
+        quote_size = self.a_config.steady_quote_size if quote_size_override is None else max(0, int(quote_size_override))
+        cap = self.a_config.steady_max_position if cap_override is None else max(0, int(cap_override))
         allowed_buy, allowed_sell = self._allowed_size(
             inventory,
             buy_exposure,
             sell_exposure,
-            cap=self.a_config.steady_max_position,
+            cap=cap,
         )
-        passive_take_edge = max(self.a_config.steady_take_large_inventory_edge, self.a_config.steady_half_spread_ticks)
+        passive_take_edge = (
+            max(self.a_config.steady_take_large_inventory_edge, self.a_config.steady_half_spread_ticks)
+            if passive_take_edge_override is None
+            else max(0, int(passive_take_edge_override))
+        )
 
         if inventory > 0:
             if (
@@ -810,10 +995,11 @@ class QuoteEngine:
                     self._desired(
                         side="SELL",
                         px=book.best_bid.px,
-                        qty=min(self.a_config.steady_quote_size, allowed_sell, book.best_bid.qty),
+                        qty=min(quote_size, allowed_sell, book.best_bid.qty),
+                        overlay=overlay,
                         aggressive=True,
                         reason="unwind long inventory into rich bid",
-                        intent="unwind",
+                        intent=aggressive_intent,
                         mode=mode,
                     )
                 )
@@ -825,10 +1011,11 @@ class QuoteEngine:
                 ask=self._desired(
                     side="SELL",
                     px=ask_px,
-                    qty=min(self.a_config.steady_quote_size, allowed_sell),
+                    qty=min(quote_size, allowed_sell),
+                    overlay=overlay,
                     aggressive=False,
                     reason="unwind ask to reduce long inventory",
-                    intent="unwind",
+                    intent=passive_intent,
                     mode=mode,
                 )
                 if allowed_sell > 0
@@ -851,10 +1038,11 @@ class QuoteEngine:
                     self._desired(
                         side="BUY",
                         px=book.best_ask.px,
-                        qty=min(self.a_config.steady_quote_size, allowed_buy, book.best_ask.qty),
+                        qty=min(quote_size, allowed_buy, book.best_ask.qty),
+                        overlay=overlay,
                         aggressive=True,
                         reason="unwind short inventory into cheap ask",
-                        intent="unwind",
+                        intent=aggressive_intent,
                         mode=mode,
                     )
                 )
@@ -865,10 +1053,11 @@ class QuoteEngine:
                 bid=self._desired(
                     side="BUY",
                     px=bid_px,
-                    qty=min(self.a_config.steady_quote_size, allowed_buy),
+                    qty=min(quote_size, allowed_buy),
+                    overlay=overlay,
                     aggressive=False,
                     reason="unwind bid to reduce short inventory",
-                    intent="unwind",
+                    intent=passive_intent,
                     mode=mode,
                 )
                 if allowed_buy > 0
@@ -925,6 +1114,7 @@ class OrderManager:
         px: int,
         qty: int,
         now_ms: int,
+        overlay: OverlayName = "mm",
         aggressive: bool = False,
         restored: bool = False,
         intent: str = "",
@@ -938,6 +1128,7 @@ class OrderManager:
             qty=qty,
             remaining_qty=qty,
             submitted_ms=now_ms,
+            overlay=overlay,
             aggressive=aggressive,
             restored=restored,
             intent=intent,
@@ -955,13 +1146,21 @@ class OrderManager:
             return None
         return self.orders.get(order_id)
 
-    def buy_exposure(self) -> int:
+    def buy_exposure(self, overlay: OverlayName | None = None) -> int:
         order = self.live_order("BUY")
-        return 0 if order is None or order.cancel_pending else order.remaining_qty
+        if order is None or order.cancel_pending:
+            return 0
+        if overlay is not None and order.overlay != overlay:
+            return 0
+        return order.remaining_qty
 
-    def sell_exposure(self) -> int:
+    def sell_exposure(self, overlay: OverlayName | None = None) -> int:
         order = self.live_order("SELL")
-        return 0 if order is None or order.cancel_pending else order.remaining_qty
+        if order is None or order.cancel_pending:
+            return 0
+        if overlay is not None and order.overlay != overlay:
+            return 0
+        return order.remaining_qty
 
     def mark_cancel_requested(self, order_id: str, now_ms: int) -> ManagedOrder | None:
         order = self.orders.get(order_id)
@@ -985,6 +1184,7 @@ class OrderManager:
                     "qty": order.qty,
                     "remaining_qty": order.remaining_qty,
                     "submitted_ms": order.submitted_ms,
+                    "overlay": order.overlay,
                     "aggressive": order.aggressive,
                     "cancel_pending": order.cancel_pending,
                     "restored": order.restored,
@@ -1064,6 +1264,7 @@ class OrderManager:
                 stale = now_ms - live.submitted_ms >= self.risk.stale_quote_ms
                 needs_reprice = (
                     live.remaining_qty != desired.qty
+                    or live.overlay != desired.overlay
                     or live.aggressive != desired.aggressive
                     or stale
                     or live.aggressive
@@ -1074,6 +1275,8 @@ class OrderManager:
                     cancel_reasons: list[str] = []
                     if live.remaining_qty != desired.qty:
                         cancel_reasons.append("qty changed")
+                    if live.overlay != desired.overlay:
+                        cancel_reasons.append("overlay changed")
                     if live.aggressive != desired.aggressive:
                         cancel_reasons.append("aggressiveness changed")
                     if stale:
@@ -1100,6 +1303,7 @@ class OrderManager:
                             side=side,
                             px=desired.px,
                             qty=desired.qty,
+                            overlay=desired.overlay,
                             aggressive=desired.aggressive,
                             reason=desired.reason,
                             intent=desired.intent,
@@ -1150,6 +1354,8 @@ class MarketAStrategy:
         self.quote_engine = QuoteEngine(a_config, risk)
         self.order_manager = OrderManager(symbol="A", risk=risk)
         self.inventory = 0
+        self.earnings_position = 0
+        self.mm_position = 0
         self.book = BookSnapshot()
         self.mode: ModeName = "OPENING_MICRO_MM"
         self.startup_ms = self._now_ms()
@@ -1194,8 +1400,69 @@ class MarketAStrategy:
         return self.valuation.multiplier_confidence
 
     def set_inventory(self, inventory: int) -> None:
-        self.inventory = int(inventory)
+        inventory = int(inventory)
+        self.inventory = inventory
+        if (
+            abs(inventory) >= self.a_config.unwind_entry_position
+            or self.unwind_active
+            or abs(self.earnings_position) > 0
+            or self.mode in {"PRE_NEWS_PULLBACK", "POST_EARNINGS_SHOCK", "UNWIND"}
+        ):
+            self.earnings_position = inventory
+            self.mm_position = 0
+        else:
+            self.mm_position = inventory
+            self.earnings_position = 0
+        self._ensure_position_invariant()
         self._refresh_unwind_state()
+
+    def sync_inventory_from_exchange(self, inventory: int) -> None:
+        inventory = int(inventory)
+        delta = inventory - self.inventory
+        self.inventory = inventory
+        if delta == 0:
+            self._ensure_position_invariant()
+            self._refresh_unwind_state()
+            return
+        preferred_overlay = self._preferred_overlay_for_inventory_delta(inventory, delta)
+        if preferred_overlay == "earnings":
+            self.earnings_position += delta
+        else:
+            self.mm_position += delta
+        self._ensure_position_invariant()
+        self._refresh_unwind_state()
+
+    def overlay_position(self, overlay: OverlayName) -> int:
+        return self.earnings_position if overlay == "earnings" else self.mm_position
+
+    def overlay_budgets(self, mode: ModeName | None = None) -> tuple[int, int, bool]:
+        active_mode = self.mode if mode is None else mode
+        budget_shift_active = active_mode in {"PRE_NEWS_PULLBACK", "POST_EARNINGS_SHOCK"}
+        if budget_shift_active:
+            return self.a_config.earnings_shift_budget, self.a_config.mm_shift_budget, True
+        return self.a_config.earnings_base_budget, self.a_config.mm_base_budget, False
+
+    def overlay_exposures(self, overlay: OverlayName) -> tuple[int, int]:
+        return self.order_manager.buy_exposure(overlay), self.order_manager.sell_exposure(overlay)
+
+    def global_allowed_size(self) -> tuple[int, int]:
+        return self.quote_engine._allowed_size(
+            self.inventory,
+            self.order_manager.buy_exposure(),
+            self.order_manager.sell_exposure(),
+            cap=self.a_config.total_position_limit,
+        )
+
+    def overlay_allowed_size(self, overlay: OverlayName, *, mode_cap: int, budget: int) -> tuple[int, int]:
+        cap = max(0, min(mode_cap, budget))
+        overlay_buy_exposure, overlay_sell_exposure = self.overlay_exposures(overlay)
+        overlay_allowed = self.quote_engine._allowed_size(
+            self.overlay_position(overlay),
+            overlay_buy_exposure,
+            overlay_sell_exposure,
+            cap=cap,
+        )
+        return self.quote_engine.clamp_allowed_sizes(overlay_allowed, self.global_allowed_size())
 
     def drain_learning_events(self) -> list[LearningEvent]:
         events = list(self.learning_events)
@@ -1293,7 +1560,13 @@ class MarketAStrategy:
         order = self.order_manager.handle_fill(order_id, qty)
         if order is None:
             return None
-        self.inventory += qty if order.side == "BUY" else -qty
+        signed_qty = qty if order.side == "BUY" else -qty
+        self.inventory += signed_qty
+        if order.overlay == "earnings":
+            self.earnings_position += signed_qty
+        else:
+            self.mm_position += signed_qty
+        self._ensure_position_invariant()
         self._refresh_unwind_state()
         self.last_trade_px = int(price)
         self.last_trade_qty = int(qty)
@@ -1344,30 +1617,244 @@ class MarketAStrategy:
             now_ms = self._now_ms()
         self._advance_discovery(now_ms)
         self.mode = self._determine_mode(now_ms)
-        return self.quote_engine.compute_quotes(
-            mode=self.mode,
-            fair_value=self.valuation.fair_value,
-            inventory=self.inventory,
-            book=self.book,
-            buy_exposure=self.order_manager.buy_exposure(),
-            sell_exposure=self.order_manager.sell_exposure(),
-            can_trade=not self.recovery_active,
-            reason_if_blocked="Waiting for recovered A orders to be cancelled.",
-            shock_direction=self.shock_direction,
-            shock_threshold=self.shock_threshold,
-            unwind_aggressive=self.unwind_aggressive_active,
+        if self.recovery_active:
+            return QuotePlan(
+                mode=self.mode,
+                bid=None,
+                ask=None,
+                aggressive_actions=(),
+                observe_only=True,
+                reason="Waiting for recovered A orders to be cancelled.",
+            )
+
+        earnings_plan = self._compute_earnings_overlay_plan(self.mode, now_ms)
+        mm_plan = self._compute_mm_overlay_plan(self.mode)
+        return self._merge_overlay_plans(self.mode, earnings_plan, mm_plan)
+
+    def _empty_overlay_plan(self, overlay: OverlayName, reason: str) -> OverlayPlan:
+        return OverlayPlan(overlay=overlay, bid=None, ask=None, aggressive_actions=(), reason=reason)
+
+    def _compute_mm_overlay_plan(self, mode: ModeName) -> OverlayPlan:
+        _, mm_budget, _ = self.overlay_budgets(mode)
+        if mm_budget <= 0:
+            return self._empty_overlay_plan("mm", "MM budget temporarily shifted into earnings handling.")
+
+        mm_inventory = self.mm_position
+        mm_buy_exposure, mm_sell_exposure = self.overlay_exposures("mm")
+        allowed_buy, allowed_sell = self.overlay_allowed_size(
+            "mm",
+            mode_cap=(
+                self.a_config.opening_max_position if mode == "OPENING_MICRO_MM"
+                else self.a_config.discovery_max_position if mode == "MULTIPLIER_DISCOVERY"
+                else self.a_config.news_caution_max_position if mode == "NEWS_CAUTIOUS_MM"
+                else self.a_config.steady_max_position
+            ),
+            budget=mm_budget,
+        )
+
+        if mode == "OPENING_MICRO_MM":
+            plan = self.quote_engine._opening_quotes(
+                mode,
+                mm_inventory,
+                self.book,
+                mm_buy_exposure,
+                mm_sell_exposure,
+                overlay="mm",
+                cap_override=min(self.a_config.opening_max_position, mm_budget),
+            )
+            return self._clamp_overlay_plan("mm", plan, allowed_buy=allowed_buy, allowed_sell=allowed_sell)
+
+        if mode == "MULTIPLIER_DISCOVERY":
+            plan = self.quote_engine._cautious_quotes(
+                mode,
+                self.valuation.fair_value,
+                mm_inventory,
+                self.book,
+                mm_buy_exposure,
+                mm_sell_exposure,
+                overlay="mm",
+                max_position_override=min(self.a_config.discovery_max_position, mm_budget),
+                quote_size_override=self.a_config.discovery_quote_size,
+                half_spread_override=self.a_config.discovery_half_spread_ticks,
+            )
+            return self._clamp_overlay_plan("mm", plan, allowed_buy=allowed_buy, allowed_sell=allowed_sell)
+
+        if mode == "NEWS_CAUTIOUS_MM":
+            plan = self.quote_engine._cautious_quotes(
+                mode,
+                self.valuation.fair_value,
+                mm_inventory,
+                self.book,
+                mm_buy_exposure,
+                mm_sell_exposure,
+                overlay="mm",
+                max_position_override=min(self.a_config.news_caution_max_position, mm_budget),
+                quote_size_override=self.a_config.news_caution_quote_size,
+                half_spread_override=self.a_config.news_caution_half_spread_ticks,
+            )
+            return self._clamp_overlay_plan("mm", plan, allowed_buy=allowed_buy, allowed_sell=allowed_sell)
+
+        if mode in {"STEADY_MM", "UNWIND"}:
+            if self.valuation.fair_value is None:
+                return self._empty_overlay_plan("mm", "Waiting for a clean A fair value before steady MM.")
+            plan = self.quote_engine._steady_quotes(
+                mode,
+                self.valuation.fair_value,
+                mm_inventory,
+                self.book,
+                mm_buy_exposure,
+                mm_sell_exposure,
+                overlay="mm",
+                cap_override=min(self.a_config.steady_max_position, mm_budget),
+                quote_size_override=self.a_config.steady_quote_size,
+            )
+            return self._clamp_overlay_plan("mm", plan, allowed_buy=allowed_buy, allowed_sell=allowed_sell)
+
+        return self._empty_overlay_plan("mm", "MM overlay idle in earnings-handling mode.")
+
+    def _compute_earnings_overlay_plan(self, mode: ModeName, now_ms: int) -> OverlayPlan:
+        earnings_budget, _, _ = self.overlay_budgets(mode)
+        if earnings_budget <= 0:
+            return self._empty_overlay_plan("earnings", "Earnings overlay budget disabled.")
+
+        earnings_inventory = self.earnings_position
+        earnings_buy_exposure, earnings_sell_exposure = self.overlay_exposures("earnings")
+        mode_cap = self._earnings_mode_cap(mode, now_ms)
+        allowed_buy, allowed_sell = self.overlay_allowed_size("earnings", mode_cap=mode_cap, budget=earnings_budget)
+
+        if mode == "PRE_NEWS_PULLBACK":
+            prejump_side = self._prejump_side(now_ms)
+            if prejump_side is None:
+                return self._empty_overlay_plan("earnings", "flat before scheduled A earnings")
+            if self.valuation.fair_value is None:
+                return self._empty_overlay_plan("earnings", "waiting for a trusted fair before boundary pre-jump")
+            plan = self.quote_engine._prejump_quotes(
+                mode,
+                self.valuation.fair_value,
+                earnings_inventory,
+                self.book,
+                earnings_buy_exposure,
+                earnings_sell_exposure,
+                bullish=prejump_side == "BUY",
+                overlay="earnings",
+                cap_override=min(self.a_config.prejump_max_position, earnings_budget),
+                quote_size_override=self.a_config.prejump_quote_size,
+                aggressive_edge_override=self.a_config.prejump_aggressive_edge,
+            )
+            return self._clamp_overlay_plan("earnings", plan, allowed_buy=allowed_buy, allowed_sell=allowed_sell)
+
+        if mode == "POST_EARNINGS_SHOCK":
+            if self.valuation.fair_value is None:
+                return self._empty_overlay_plan("earnings", "Waiting for a trusted fair value before shock trading.")
+            plan = self.quote_engine._shock_quotes(
+                mode,
+                self.valuation.fair_value,
+                earnings_inventory,
+                self.book,
+                earnings_buy_exposure,
+                earnings_sell_exposure,
+                shock_direction=self.shock_direction,
+                shock_threshold=self.shock_threshold or self.a_config.shock_take_min_edge,
+                overlay="earnings",
+                cap_override=min(self._shock_cap_for_mode(mode), earnings_budget),
+                quote_size_override=self.a_config.shock_quote_size,
+            )
+            return self._clamp_overlay_plan("earnings", plan, allowed_buy=allowed_buy, allowed_sell=allowed_sell)
+
+        if mode == "UNWIND":
+            if self.valuation.fair_value is None:
+                return self._empty_overlay_plan("earnings", "Waiting for a trusted fair value before unwind.")
+            passive_take_edge = self.a_config.earnings_unwind_passive_take_edge
+            if abs(earnings_inventory) <= self.a_config.earnings_unwind_passive_exit:
+                return self._empty_overlay_plan("earnings", "earnings inventory no longer needs dedicated unwind handling")
+            plan = self.quote_engine._unwind_quotes(
+                mode,
+                self.valuation.fair_value,
+                earnings_inventory,
+                self.book,
+                earnings_buy_exposure,
+                earnings_sell_exposure,
+                aggressive_allowed=self.unwind_aggressive_active,
+                overlay="earnings",
+                cap_override=earnings_budget,
+                quote_size_override=self.a_config.steady_quote_size,
+                aggressive_intent="unwind",
+                passive_intent="unwind",
+                passive_take_edge_override=passive_take_edge,
+            )
+            return self._clamp_overlay_plan("earnings", plan, allowed_buy=allowed_buy, allowed_sell=allowed_sell)
+
+        return self._empty_overlay_plan("earnings", "earnings overlay idle outside earnings-active modes")
+
+    def _clamp_overlay_plan(
+        self,
+        overlay: OverlayName,
+        plan: QuotePlan,
+        *,
+        allowed_buy: int,
+        allowed_sell: int,
+    ) -> OverlayPlan:
+        def clamp_order(order: DesiredOrder | None) -> DesiredOrder | None:
+            if order is None:
+                return None
+            allowed = allowed_buy if order.side == "BUY" else allowed_sell
+            qty = min(order.qty, allowed)
+            if qty <= 0:
+                return None
+            return order if qty == order.qty else replace(order, qty=qty)
+
+        return OverlayPlan(
+            overlay=overlay,
+            bid=clamp_order(plan.bid),
+            ask=clamp_order(plan.ask),
+            aggressive_actions=tuple(
+                clamped
+                for action in plan.aggressive_actions
+                if (clamped := clamp_order(action)) is not None
+            ),
+            reason=plan.reason,
+        )
+
+    def _merge_overlay_plans(self, mode: ModeName, earnings_plan: OverlayPlan, mm_plan: OverlayPlan) -> QuotePlan:
+        aggressive_by_side: dict[SideName, DesiredOrder] = {}
+        for action in earnings_plan.aggressive_actions:
+            aggressive_by_side[action.side] = action
+        for action in mm_plan.aggressive_actions:
+            aggressive_by_side.setdefault(action.side, action)
+
+        def choose_passive(side: SideName) -> DesiredOrder | None:
+            if side in aggressive_by_side:
+                return None
+            earnings_order = earnings_plan.bid if side == "BUY" else earnings_plan.ask
+            mm_order = mm_plan.bid if side == "BUY" else mm_plan.ask
+            if earnings_order is not None and self._order_reduces_position(side, self.earnings_position):
+                return earnings_order
+            if mm_order is not None:
+                return mm_order
+            return earnings_order
+
+        bid = choose_passive("BUY")
+        ask = choose_passive("SELL")
+        aggressive_actions = tuple(
+            action
+            for side in ("BUY", "SELL")
+            if (action := aggressive_by_side.get(side)) is not None
+        )
+        reason_parts = [part for part in (earnings_plan.reason, mm_plan.reason) if part]
+        return QuotePlan(
+            mode=mode,
+            bid=bid,
+            ask=ask,
+            aggressive_actions=aggressive_actions,
+            observe_only=False,
+            reason=" | ".join(reason_parts) if reason_parts else mode.lower(),
         )
 
     def trace_state(self, now_ms: int) -> dict[str, object]:
         mode = self.mode
         buy_exposure = self.order_manager.buy_exposure()
         sell_exposure = self.order_manager.sell_exposure()
-        allowed_buy, allowed_sell = self.quote_engine.allowed_size_for_mode(
-            mode,
-            self.inventory,
-            buy_exposure,
-            sell_exposure,
-        )
+        allowed_buy, allowed_sell = self.global_allowed_size()
         discovery = None
         if self.discovery_window is not None:
             discovery = {
@@ -1380,6 +1867,35 @@ class MarketAStrategy:
                 "latest_sample": self.discovery_window.samples[-1] if self.discovery_window.samples else None,
                 "invalidated_reason": self.discovery_window.invalidated_reason,
             }
+        earnings_budget, mm_budget, budget_shift_active = self.overlay_budgets(mode)
+        earnings_buy_exposure, earnings_sell_exposure = self.overlay_exposures("earnings")
+        mm_buy_exposure, mm_sell_exposure = self.overlay_exposures("mm")
+        earnings_allowed_buy, earnings_allowed_sell = self.overlay_allowed_size(
+            "earnings",
+            mode_cap=self._earnings_mode_cap(mode, now_ms),
+            budget=earnings_budget,
+        )
+        mm_mode_cap = self.a_config.steady_max_position
+        if mode == "OPENING_MICRO_MM":
+            mm_mode_cap = self.a_config.opening_max_position
+        elif mode == "MULTIPLIER_DISCOVERY":
+            mm_mode_cap = self.a_config.discovery_max_position
+        elif mode == "NEWS_CAUTIOUS_MM":
+            mm_mode_cap = self.a_config.news_caution_max_position
+        mm_allowed_buy, mm_allowed_sell = self.overlay_allowed_size(
+            "mm",
+            mode_cap=mm_mode_cap,
+            budget=mm_budget,
+        )
+        position_cap = min(
+            self.a_config.total_position_limit,
+            max(
+                0,
+                self._earnings_mode_cap(mode, now_ms) if mode in {"PRE_NEWS_PULLBACK", "POST_EARNINGS_SHOCK", "UNWIND"} else 0,
+                mm_budget,
+            ),
+        )
+        live_orders = self.order_manager.live_orders_snapshot()
         return {
             "mode": mode,
             "fair_value": self.valuation.fair_value,
@@ -1393,14 +1909,33 @@ class MarketAStrategy:
             "discovery_window": discovery,
             "news_caution_active": self.news_caution_active,
             "inventory": self.inventory,
+            "earnings_position": self.earnings_position,
+            "mm_position": self.mm_position,
+            "earnings_budget": earnings_budget,
+            "mm_budget": mm_budget,
+            "budget_shift_active": budget_shift_active,
             "unwind_active": self.unwind_active,
             "unwind_aggressive_active": self.unwind_aggressive_active,
             "buy_exposure": buy_exposure,
             "sell_exposure": sell_exposure,
             "allowed_buy_size": allowed_buy,
             "allowed_sell_size": allowed_sell,
-            "position_cap": self.quote_engine.cap_for_mode(mode),
-            "live_orders": self.order_manager.live_orders_snapshot(),
+            "position_cap": position_cap,
+            "overlay_exposures": {
+                "earnings": {
+                    "buy": earnings_buy_exposure,
+                    "sell": earnings_sell_exposure,
+                    "allowed_buy": earnings_allowed_buy,
+                    "allowed_sell": earnings_allowed_sell,
+                },
+                "mm": {
+                    "buy": mm_buy_exposure,
+                    "sell": mm_sell_exposure,
+                    "allowed_buy": mm_allowed_buy,
+                    "allowed_sell": mm_allowed_sell,
+                },
+            },
+            "live_orders": live_orders,
             "book": {
                 "best_bid_px": None if self.book.best_bid is None else self.book.best_bid.px,
                 "best_bid_qty": None if self.book.best_bid is None else self.book.best_bid.qty,
@@ -1562,9 +2097,9 @@ class MarketAStrategy:
         return now_ms - self.shock_started_ms < self.a_config.shock_window_ms
 
     def _refresh_unwind_state(self) -> None:
-        abs_inventory = abs(self.inventory)
+        abs_inventory = abs(self.earnings_position)
         if self.unwind_active:
-            if abs_inventory <= self.a_config.unwind_exit_position:
+            if abs_inventory <= self.a_config.earnings_unwind_passive_exit:
                 self.unwind_active = False
                 self.unwind_aggressive_active = False
                 return
@@ -1576,11 +2111,70 @@ class MarketAStrategy:
             return
 
         if self.unwind_aggressive_active:
-            if abs_inventory <= self.a_config.unwind_aggressive_exit:
+            if abs_inventory <= self.a_config.earnings_unwind_aggressive_exit:
                 self.unwind_aggressive_active = False
             return
-        if abs_inventory >= self.a_config.unwind_aggressive_entry:
+        if abs_inventory >= self.a_config.earnings_unwind_aggressive_entry:
             self.unwind_aggressive_active = True
+
+    def _shock_cap_for_mode(self, mode: ModeName) -> int:
+        _, _, budget_shift_active = self.overlay_budgets(mode)
+        return self.a_config.shock_shift_max_position if budget_shift_active else self.a_config.shock_base_max_position
+
+    def _earnings_mode_cap(self, mode: ModeName, now_ms: int) -> int:
+        earnings_budget, _, _ = self.overlay_budgets(mode)
+        if mode == "PRE_NEWS_PULLBACK":
+            if self._prejump_side(now_ms) is None:
+                return 0
+            return min(self.a_config.prejump_max_position, earnings_budget)
+        if mode == "POST_EARNINGS_SHOCK":
+            return min(self._shock_cap_for_mode(mode), earnings_budget)
+        if mode == "UNWIND":
+            return earnings_budget
+        return 0
+
+    def _prejump_side(self, now_ms: int) -> SideName | None:
+        if not self.a_config.prejump_enabled:
+            return None
+        if self.news_caution_active:
+            return None
+        if self.trusted_multiplier is None or self.last_earnings_value is None or self.fair_value is None:
+            return None
+        until_next_earnings = self.ms_until_next_scheduled_earnings(now_ms)
+        if until_next_earnings is None or until_next_earnings > self.a_config.prejump_window_ms:
+            return None
+        if self.last_earnings_value <= self.a_config.prejump_low_threshold:
+            return "BUY"
+        if self.last_earnings_value >= self.a_config.prejump_high_threshold:
+            return "SELL"
+        return None
+
+    @staticmethod
+    def _order_reduces_position(side: SideName, position: int) -> bool:
+        if position > 0:
+            return side == "SELL"
+        if position < 0:
+            return side == "BUY"
+        return False
+
+    def _preferred_overlay_for_inventory_delta(self, inventory: int, delta: int) -> OverlayName:
+        if self.unwind_active or self.mode in {"PRE_NEWS_PULLBACK", "POST_EARNINGS_SHOCK", "UNWIND"}:
+            return "earnings"
+        if abs(self.earnings_position) > abs(self.mm_position):
+            return "earnings"
+        if abs(inventory) >= self.a_config.unwind_entry_position or abs(delta) >= self.a_config.shock_quote_size:
+            return "earnings"
+        return "mm"
+
+    def _ensure_position_invariant(self) -> None:
+        split_total = self.earnings_position + self.mm_position
+        if split_total == self.inventory:
+            return
+        correction = self.inventory - split_total
+        if self._preferred_overlay_for_inventory_delta(self.inventory, correction) == "earnings":
+            self.earnings_position += correction
+        else:
+            self.mm_position += correction
 
     def _maybe_finish_recovery(self) -> None:
         if self.recovery_active and not self.recovery_pending:
