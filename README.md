@@ -58,3 +58,5 @@ No audited placement, profitability, Sharpe ratio, or live return is claimed her
 ## Publication and historical artifacts
 
 The original repository is preserved. Public cleanup removes credential values and duplicated email-attachment archives that contained them. Generated logs, caches, and machine metadata are excluded from the current working tree where they are not needed to reproduce the code. Original author records and third-party notices are retained. No new blanket license is assigned to the team's work.
+
+See [publication history and original commit mapping](docs/publication-history.md) for the cleaned-copy provenance.
