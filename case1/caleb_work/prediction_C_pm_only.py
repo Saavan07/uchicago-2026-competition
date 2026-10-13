@@ -1085,7 +1085,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prediction-market-only rates bot extracted from prediction_C.py.")
     parser.add_argument("--host", default="practice.uchicago.exchange:3333")
     parser.add_argument("--username", default="uiuc")
-    parser.add_argument("--password", default="REDACTED_PUBLIC_COPY")
+    parser.add_argument("--password", default="REDACTED_COMPETITION_PASSWORD")
     return parser.parse_args()
 
 

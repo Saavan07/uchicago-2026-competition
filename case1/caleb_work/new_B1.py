@@ -297,7 +297,7 @@ def load_config() -> BotConfig:
     return BotConfig(
         host=env_str("UTC_HOST", "34.197.188.76:3333"),
         username=env_str("UTC_USERNAME", "uiuc"),
-        password=env_str("UTC_PASSWORD", "REDACTED_PUBLIC_COPY"),
+        password=env_str("UTC_PASSWORD", "REDACTED_COMPETITION_PASSWORD"),
         hard_max_order_size=env_int("B1_MAX_ORDER_SIZE", 40),
         hard_max_open_orders=env_int("B1_MAX_OPEN_ORDERS", 50),
         hard_max_outstanding_volume=env_int("B1_MAX_OUTSTANDING_VOLUME", 120),

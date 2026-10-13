@@ -949,7 +949,7 @@ async def main():
     client = PredictionMarketsBot6(
         os.getenv("UTC_HOST", "34.197.188.76:3333"),
         os.getenv("UTC_USERNAME", "uiuc"),
-        os.getenv("UTC_PASSWORD", "REDACTED_PUBLIC_COPY"),
+        os.getenv("UTC_PASSWORD", "REDACTED_COMPETITION_PASSWORD"),
     )
     await client.start()
 

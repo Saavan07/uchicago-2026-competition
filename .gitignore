@@ -8,3 +8,13 @@
 /case1/ayush_work/marketA_v2
 /case1/ayush_work/marketA_v3/__pycache__/
 /case1/ayush_work/marketA_v3/analysis_runs/
+
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+*.egg-info/
+/case1/Case 1 Saavan/email_attachments/case1_bot_files.zip

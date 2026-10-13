@@ -41,9 +41,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 # Quick-start defaults so clicking the IDE Run button works the same way as the
 # provided example bot. Environment variables still override these.
-DEFAULT_SERVER = "practice.uchicago.exchange:3333"
-DEFAULT_USERNAME = "uiuc"
-DEFAULT_PASSWORD = "REDACTED_PUBLIC_COPY"
+DEFAULT_SERVER = None
+DEFAULT_USERNAME = None
+DEFAULT_PASSWORD = None
 
 # A's price-to-earnings multiplier changes by round, so we learn it live.
 DEFAULT_A_INITIAL_MULTIPLIER: float | None = None

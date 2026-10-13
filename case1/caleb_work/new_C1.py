@@ -1196,7 +1196,7 @@ async def main():
     client = NewC1Client(
         pm1.env_str("UTC_HOST", "34.197.188.76:3333"),
         pm1.env_str("UTC_USERNAME", "uiuc"),
-        pm1.env_str("UTC_PASSWORD", "REDACTED_PUBLIC_COPY"),
+        pm1.env_str("UTC_PASSWORD", "REDACTED_COMPETITION_PASSWORD"),
     )
     await client.start()
 

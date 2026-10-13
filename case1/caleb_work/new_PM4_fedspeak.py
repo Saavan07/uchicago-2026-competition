@@ -770,7 +770,7 @@ async def main():
     client = NewPM4FedSpeakClient(
         env_str("UTC_HOST", "34.197.188.76:3333"),
         env_str("UTC_USERNAME", "uiuc"),
-        env_str("UTC_PASSWORD", "REDACTED_PUBLIC_COPY"),
+        env_str("UTC_PASSWORD", "REDACTED_COMPETITION_PASSWORD"),
     )
     await client.start()
 

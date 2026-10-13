@@ -23,24 +23,31 @@ from testing1 import MarketABot
 
 
 class CompetitionModeTests(unittest.TestCase):
-    def test_competition_wrapper_backfills_hardcoded_exchange_defaults(self) -> None:
-        env: dict[str, str] = {}
+    def test_competition_wrapper_requires_explicit_credentials(self) -> None:
+        env = {}
+        run_competition.apply_competition_env_defaults(env)
+        with self.assertRaises(SystemExit):
+            run_competition.validate_required_env(env)
+        self.assertNotIn("UTC_PASSWORD", env)
+
+    def test_competition_wrapper_preserves_explicit_exchange_credentials(self) -> None:
+        env: dict[str, str] = {"UTC_HOST": "test-exchange.invalid:3333", "UTC_USERNAME": "test-user", "UTC_PASSWORD": "test-password"}
 
         run_competition.apply_competition_env_defaults(env)
 
-        self.assertEqual(env["UTC_HOST"], "uchicago.exchange:3333")
-        self.assertEqual(env["UTC_USERNAME"], "uiuc")
-        self.assertEqual(env["UTC_PASSWORD"], "REDACTED_PUBLIC_COPY")
+        self.assertEqual(env["UTC_HOST"], "test-exchange.invalid:3333")
+        self.assertEqual(env["UTC_USERNAME"], "test-user")
+        self.assertEqual(env["UTC_PASSWORD"], "test-password")
         run_competition.validate_required_env(env)
 
     def test_competition_wrapper_applies_safe_runtime_defaults(self) -> None:
-        env = {}
+        env = {"UTC_HOST": "test-exchange.invalid:3333", "UTC_USERNAME": "test-user", "UTC_PASSWORD": "test-password"}
 
         run_competition.apply_competition_env_defaults(env)
 
-        self.assertEqual(env["UTC_HOST"], "uchicago.exchange:3333")
-        self.assertEqual(env["UTC_USERNAME"], "uiuc")
-        self.assertEqual(env["UTC_PASSWORD"], "REDACTED_PUBLIC_COPY")
+        self.assertEqual(env["UTC_HOST"], "test-exchange.invalid:3333")
+        self.assertEqual(env["UTC_USERNAME"], "test-user")
+        self.assertEqual(env["UTC_PASSWORD"], "test-password")
         self.assertEqual(env["TRACE_ENABLED"], "0")
         self.assertEqual(env["TRACE_WRITE_SUMMARY_ON_SHUTDOWN"], "0")
         self.assertEqual(env["TRACE_RECORD_BOOK_UPDATES"], "0")
@@ -55,13 +62,13 @@ class CompetitionModeTests(unittest.TestCase):
         self.assertTrue(command[1].endswith("case1/caleb_work/run_pm_guard.py"))
 
     def test_upgraded_wrapper_adds_a_only_etf_and_trap_defaults(self) -> None:
-        env = {}
+        env = {"UTC_HOST": "test-exchange.invalid:3333", "UTC_USERNAME": "test-user", "UTC_PASSWORD": "test-password"}
 
         run_competition_upgraded.apply_upgraded_env_defaults(env)
 
-        self.assertEqual(env["UTC_HOST"], "uchicago.exchange:3333")
-        self.assertEqual(env["UTC_USERNAME"], "uiuc")
-        self.assertEqual(env["UTC_PASSWORD"], "REDACTED_PUBLIC_COPY")
+        self.assertEqual(env["UTC_HOST"], "test-exchange.invalid:3333")
+        self.assertEqual(env["UTC_USERNAME"], "test-user")
+        self.assertEqual(env["UTC_PASSWORD"], "test-password")
         self.assertEqual(env["TRACE_ENABLED"], "0")
         self.assertEqual(env["BOT_PASSIVE_ONLY"], "1")
         self.assertEqual(env["ETF_ENABLE_C_EARNINGS"], "0")
@@ -70,11 +77,11 @@ class CompetitionModeTests(unittest.TestCase):
         self.assertEqual(env["A_EARNINGS_TRAP_MAX_LIFETIME_MS"], "1500")
 
     def test_stable_competition_wrapper_remains_without_upgraded_overrides(self) -> None:
-        env: dict[str, str] = {}
+        env: dict[str, str] = {"UTC_HOST": "test-exchange.invalid:3333", "UTC_USERNAME": "test-user", "UTC_PASSWORD": "test-password"}
 
         run_competition.apply_competition_env_defaults(env)
 
-        self.assertEqual(env["UTC_HOST"], "uchicago.exchange:3333")
+        self.assertEqual(env["UTC_HOST"], "test-exchange.invalid:3333")
         self.assertNotIn("BOT_PASSIVE_ONLY", env)
         self.assertNotIn("ETF_ENABLE_C_EARNINGS", env)
         self.assertNotIn("A_EARNINGS_TRAP_ENABLED", env)

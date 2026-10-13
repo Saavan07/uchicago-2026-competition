@@ -175,7 +175,7 @@ def load_config() -> BotConfig:
     return BotConfig(
         host=env_str("UTC_HOST", "34.197.188.76:3333"),
         username=env_str("UTC_USERNAME", "uiuc"),
-        password=env_str("UTC_PASSWORD", "REDACTED_PUBLIC_COPY"),
+        password=env_str("UTC_PASSWORD", "REDACTED_COMPETITION_PASSWORD"),
         risk_free_rate=env_float("B_RISK_FREE_RATE", 0.0),
         time_to_expiry_years=env_float("B_TIME_TO_EXPIRY_YEARS", 1.0),
         max_position_per_option=env_int("B_MAX_OPTION_POSITION", 6),

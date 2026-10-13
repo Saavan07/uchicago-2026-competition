@@ -1084,7 +1084,7 @@ async def main():
     client = MergedPMClient(
         _env("UTC_HOST", "34.197.188.76:3333"),
         _env("UTC_USERNAME", "uiuc"),
-        _env("UTC_PASSWORD", "REDACTED_PUBLIC_COPY"),
+        _env("UTC_PASSWORD", "REDACTED_COMPETITION_PASSWORD"),
     )
     await client.start()
 

@@ -211,7 +211,7 @@ def main() -> None:
     parser.add_argument("--seconds", type=float, default=30.0, help="Runtime for --live mode.")
     parser.add_argument("--host", default="34.197.188.76:3333")
     parser.add_argument("--username", default="uiuc")
-    parser.add_argument("--password", default="REDACTED_PUBLIC_COPY")
+    parser.add_argument("--password", default="REDACTED_COMPETITION_PASSWORD")
     parser.add_argument("--output", default=str(default_output_path()))
     args = parser.parse_args()
 

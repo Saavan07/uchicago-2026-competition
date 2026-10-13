@@ -14,9 +14,6 @@ from testing1 import LOGGER, MarketABot, load_runtime_config
 
 REQUIRED_ENV_KEYS = ("UTC_HOST", "UTC_USERNAME", "UTC_PASSWORD")
 COMPETITION_ENV_DEFAULTS: dict[str, str] = {
-    "UTC_HOST": "uchicago.exchange:3333",
-    "UTC_USERNAME": "uiuc",
-    "UTC_PASSWORD": "REDACTED_PUBLIC_COPY",
     "TRACE_ENABLED": "0",
     "TRACE_WRITE_SUMMARY_ON_SHUTDOWN": "0",
     "TRACE_RECORD_BOOK_UPDATES": "0",
@@ -110,9 +107,9 @@ async def main() -> None:
     apply_competition_env_defaults()
     validate_required_env()
     config = load_runtime_config(
-        default_host=COMPETITION_ENV_DEFAULTS["UTC_HOST"],
-        default_username=COMPETITION_ENV_DEFAULTS["UTC_USERNAME"],
-        default_password=COMPETITION_ENV_DEFAULTS["UTC_PASSWORD"],
+        default_host=None,
+        default_username=None,
+        default_password=None,
     )
 
     LOGGER.info("Starting competition runtime against %s", config.exchange.host)

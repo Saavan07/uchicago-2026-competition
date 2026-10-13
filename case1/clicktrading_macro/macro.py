@@ -9,7 +9,7 @@ from utcxchangelib import Side, XChangeClient
 # Exchange connection settings.
 SERVER = "uchicago.exchange:3333"
 USERNAME = "uiuc"
-PASSWORD = "REDACTED_PUBLIC_COPY"
+PASSWORD = "REDACTED_COMPETITION_PASSWORD"
 
 # Simple macro order size.
 ORDER_QTY = 40

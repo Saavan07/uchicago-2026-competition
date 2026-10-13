@@ -49,7 +49,7 @@ class MyXchangeClient(XChangeClient):
 
 async def main():
     SERVER = '3from.76:3333'
-    my_client = MyXchangeClient(SERVER, "uiuc", "REDACTED_PUBLIC_COPY")
+    my_client = MyXchangeClient(SERVER, "uiuc", "REDACTED_COMPETITION_PASSWORD")
     await my_client.start()
 
 

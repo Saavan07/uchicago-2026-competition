@@ -1,6 +1,7 @@
 numpy
 pandas
-# git+https://github.com/UChicagoFM/utcxchangelib.git
-# protobuf==6.31.1
-# grpcio==1.78.0 
-# grpcio-tools==1.78.0
+scikit-learn
+protobuf==6.31.1
+grpcio==1.78.0
+grpcio-tools==1.78.0
+-e ./utc_exchange_codebase/utcxchangelib-main

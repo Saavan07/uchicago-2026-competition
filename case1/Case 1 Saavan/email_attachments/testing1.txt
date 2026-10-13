@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 # provided example bot. Environment variables still override these.
 DEFAULT_SERVER = "34.197.188.76:3333"
 DEFAULT_USERNAME = "uiuc"
-DEFAULT_PASSWORD = "REDACTED_PUBLIC_COPY"
+DEFAULT_PASSWORD = "REDACTED_COMPETITION_PASSWORD"
 
 # A's price-to-earnings multiplier changes by round, so we learn it live.
 DEFAULT_A_INITIAL_MULTIPLIER: float | None = None
