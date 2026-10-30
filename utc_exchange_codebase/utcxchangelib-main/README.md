@@ -1,6 +1,6 @@
 # UChicago Trading xchange Client Library
 
-Detailed user-side API documentation is available in [docs/user_side_api.md](/Users/ayushchandra/Programming/Competitions/UchicagoTrading/uchicago-2026-competition/utc_exchange_codebase/utcxchangelib-main/docs/user_side_api.md).
+Detailed user-side API documentation is available in [docs/user_side_api.md](docs/user_side_api.md).
 
 ## Installation
 
