@@ -45,7 +45,7 @@ To connect to an exchange, you must supply your own authorized `UTC_HOST`, `UTC_
 
 The directory contains `submission.py`, `submission_converted.py`, research/backtesting helpers, diagnostics, and notebooks. `validate.py` implements local historical validation with transaction and borrowing costs and time-series splits. The default single split imports `submission_converted.py`, while `--cv` currently imports `submission.py` inside each fold. These are distinct variants, so their printed results are not a like-for-like comparison.
 
-From `case2/`, run `python validate.py --help` to inspect the evaluator. The repository includes `prices.csv` and `meta.csv` for local validation. `whole_dataset_model_search.py` still has a teammate-specific absolute path and should be adapted before use. Notebook outputs and tuning runs are not claims of out-of-sample competition performance.
+From `case2/`, run `python validate.py --help` to inspect the evaluator. The repository includes `prices.csv` and `meta.csv` for local validation. Set the data path in `whole_dataset_model_search.py` to your local copy before running it. See [verification](docs/verification.md) for the recorded validation setup and results.
 
 ## My work and the team
 
@@ -53,10 +53,6 @@ I worked on this project with Ayush Chandra, Caleb Goodman, and Parry Nall. Our 
 
 My work included the integrated runtime, strategy iterations, risk and execution controls, diagnostic traces, ETF and Market C integration, competition launchers, and settlement and shutdown handling. Some of that involved adapting and integrating my teammates' strategies, with their contributions identified in the code and commit history.
 
-No audited placement, profitability, Sharpe ratio, or live return is claimed here. Any future result claim needs its run configuration, data, evaluation split, and retained evidence.
+## Repository history
 
-## Publication and historical artifacts
-
-The original repository is preserved. Public cleanup removes credential values and duplicated email-attachment archives that contained them. Generated logs, caches, and machine metadata are excluded from the current working tree where they are not needed to reproduce the code. Original author records and third-party notices are retained. No new blanket license is assigned to the team's work.
-
-See [publication history and original commit mapping](docs/publication-history.md) for the cleaned-copy provenance.
+The original author records and third-party notices are retained. See [publication history and original commit mapping](docs/publication-history.md) for details about the public copy and its source history.
