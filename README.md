@@ -1,8 +1,8 @@
 # UChicago Trading Competition 2026
 
-A collaborative competition repository containing the team's Case 1 trading bot and Case 2 portfolio-strategy research. This project is separate from the SIG Predictions Cup.
+This repository brings together the trading bot and portfolio research our team worked on for the 2026 UChicago Trading Competition.
 
-Saavan Kiran led development and research for the integrated Case 1 bot used by the team at the competition. The bot incorporates teammate components and joint debugging and experimentation. Saavan also contributed to Case 2; that case is shared work and is not presented as his sole implementation.
+My main focus was researching and building the integrated Case 1 trading bot we ran at the competition. That involved bringing our strategies together, working on execution and inventory controls, and debugging and testing with my teammates. I also contributed to our Case 2 portfolio research.
 
 ## Start here
 
@@ -47,11 +47,11 @@ The directory contains `submission.py`, `submission_converted.py`, research/back
 
 From `case2/`, run `python validate.py --help` to inspect the evaluator. The repository includes `prices.csv` and `meta.csv` for local validation. `whole_dataset_model_search.py` still has a teammate-specific absolute path and should be adapted before use. Notebook outputs and tuning runs are not claims of out-of-sample competition performance.
 
-## Team and contribution record
+## My work and the team
 
-The source repository is [ayushchandra8907/uchicago-2026-competition](https://github.com/ayushchandra8907/uchicago-2026-competition), with work by Saavan Kiran, Ayush Chandra, Caleb Goodman, and Parry Nall.
+I worked on this project with Ayush Chandra, Caleb Goodman, and Parry Nall. Our shared work comes from [the team repository](https://github.com/ayushchandra8907/uchicago-2026-competition).
 
-Saavan's recorded history covers the integrated runtime, strategy iterations, risk and execution controls, traces, ETF and Market C integration, competition launchers, and settlement/shutdown behavior. Some changes explicitly port or integrate teammate strategies; those origins remain identified in code and history. Commit counts are not used to assign exclusive ownership.
+My work included the integrated runtime, strategy iterations, risk and execution controls, diagnostic traces, ETF and Market C integration, competition launchers, and settlement and shutdown handling. Some of that involved adapting and integrating my teammates' strategies, with their contributions identified in the code and commit history.
 
 No audited placement, profitability, Sharpe ratio, or live return is claimed here. Any future result claim needs its run configuration, data, evaluation split, and retained evidence.
 
