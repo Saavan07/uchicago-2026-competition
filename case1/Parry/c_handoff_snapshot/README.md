@@ -1,7 +1,7 @@
 # Market C Handoff Snapshot
 
-This folder is a curated copy of the private `/Users/parrynall/UChicago-Trading_2`
-workspace so Saavan can inspect the Market C work from the shared GitHub repo.
+This folder preserves selected Market C development files from Parry's standalone
+workspace for reference alongside the team's integrated bot.
 
 ## Files
 
@@ -12,8 +12,7 @@ workspace so Saavan can inspect the Market C work from the shared GitHub repo.
   historical context only; it is useful for understanding the earlier fair/rate
   model and simpler execution loop, but it is not the current source of truth.
 - `logs/`: Curated run logs from the private workspace. These were selected
-  because they show the main performance and behavior cases we discussed while
-  building C.
+  to illustrate different strategy behaviors during Market C development.
 
 ## Important Notes
 
