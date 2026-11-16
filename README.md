@@ -1,8 +1,10 @@
 # UChicago Trading Competition 2026
 
-This repository brings together the trading bot and portfolio research our team worked on for the 2026 UChicago Trading Competition.
+A Python trading system and portfolio research from our team's entry in the 2026 UChicago Trading Competition.
 
-My main focus was researching and building the integrated Case 1 trading bot we ran at the competition. That involved bringing our strategies together, working on execution and inventory controls, and debugging and testing with my teammates. I also contributed to our Case 2 portfolio research.
+I led development of the integrated Case 1 bot we ran at the competition, bringing strategies into an event-driven runtime with order management, inventory controls, and settlement handling. I worked with my teammates on debugging and testing, and contributed to our Case 2 portfolio research.
+
+**211 offline tests passed** in the [October 2026 verification](docs/verification.md), covering strategy and runtime behavior with simulated exchange objects. The repository preserves the competition implementation, research experiments, and individual contributions.
 
 ## Start here
 
